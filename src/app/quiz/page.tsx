@@ -31,6 +31,9 @@ export default function QuizPage() {
   const [score, setScore] = useState({ correct: 0, wrong: 0 });
   const [speechSupported, setSpeechSupported] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Increments on every new word spoken; stale sentence timeouts check it
+  // before speaking so an old word's sentence can't play over the next word.
+  const speechTokenRef = useRef(0);
 
   const current = words[index];
 
@@ -71,14 +74,22 @@ export default function QuizPage() {
     window.speechSynthesis.speak(utterance);
   }, []);
 
-  const speakCurrent = useCallback(() => {
-    if (!current) return;
-    speak(current.word);
-    if (current.sentence) {
-      // Speak the sentence after a short pause so the word is heard first.
-      setTimeout(() => speak(current.sentence!), 1200);
-    }
-  }, [current, speak]);
+  const speakWord = useCallback(
+    (word: Word) => {
+      if (!word) return;
+      const token = ++speechTokenRef.current;
+      speak(word.word);
+      if (word.sentence) {
+        // Speak the sentence after a short pause so the word is heard first.
+        setTimeout(() => {
+          if (speechTokenRef.current === token) {
+            speak(word.sentence!);
+          }
+        }, 1200);
+      }
+    },
+    [speak],
+  );
 
   if (!mounted) {
     // Server render / first paint: render nothing database-dependent.
@@ -91,8 +102,9 @@ export default function QuizPage() {
     setFeedback(null);
     setGuess("");
     setPhase("playing");
+    const firstWord = words[0];
     setTimeout(() => {
-      speakCurrent();
+      speakWord(firstWord);
       inputRef.current?.focus();
     }, 100);
   }
@@ -112,15 +124,19 @@ export default function QuizPage() {
   }
 
   function nextQuestion() {
-    if (index + 1 >= words.length) {
+    const next = index + 1;
+    if (next >= words.length) {
       setPhase("finished");
       return;
     }
-    setIndex((i) => i + 1);
+    setIndex(next);
     setGuess("");
     setFeedback(null);
+    // Speak the explicit next word from the pool, NOT the closure's `current`,
+    // so the voice always matches the question being shown.
+    const nextWord = words[next];
     setTimeout(() => {
-      speakCurrent();
+      speakWord(nextWord);
       inputRef.current?.focus();
     }, 100);
   }
@@ -231,7 +247,7 @@ export default function QuizPage() {
 
       <div className="rounded-xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
         <button
-          onClick={speakCurrent}
+          onClick={() => speakWord(current)}
           className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-indigo-600 text-3xl text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
           aria-label="Play word"
           title="Play word"
